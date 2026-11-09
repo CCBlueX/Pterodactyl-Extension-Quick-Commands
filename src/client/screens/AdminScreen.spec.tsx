@@ -1,15 +1,16 @@
 import { afterEach, expect, test, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createExtensionTestHost } from '@pterodactyl/sdk/testing';
 import * as api from '../api';
 import AdminScreen from './AdminScreen';
 
-vi.mock('../api', async (importOriginal) => ({ ...(await importOriginal<typeof import('../api')>()), getAdminButtons: vi.fn() }));
+vi.mock('../api', async (importOriginal) => ({ ...(await importOriginal<typeof import('../api')>()), getAdminButtons: vi.fn(), orderAdminButtons: vi.fn() }));
 
 const button = (id: number, label: string, commands: string[], changes: Partial<api.QuickButton> = {}): api.QuickButton => ({
     id,
     label,
     color: 'green',
+    icon: null,
     commands,
     placeholders: [],
     confirm: false,
@@ -66,9 +67,24 @@ test('shows a card per button on narrow screens', async () => {
     expect(await screen.findByDisplayValue('Announce restart')).toBeTruthy();
 });
 
-test('says when there are no buttons on narrow screens', async () => {
-    vi.stubGlobal('matchMedia', (media: string) => ({ matches: false, media, addEventListener: () => {}, removeEventListener: () => {} }));
+test('shows an empty state that opens the new button dialog', async () => {
     renderScreen([]);
 
-    expect(await screen.findByText('No buttons yet.')).toBeTruthy();
+    expect(await screen.findByText('No buttons yet')).toBeTruthy();
+    fireEvent.click(screen.getAllByRole('button', { name: 'New button' }).at(-1)!);
+    expect(await screen.findByLabelText('Icon')).toBeTruthy();
+});
+
+test('reorders buttons with Alt+Down and saves the whole order', async () => {
+    const night = button(3, 'Night', ['time set night'], { color: 'cyan', icon: 'moon' });
+    renderScreen([...buttons, night]);
+    vi.mocked(api.orderAdminButtons).mockResolvedValue({ buttons: [buttons[1], buttons[0], night], eggs: [] });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Reorder' }));
+    fireEvent.keyDown(screen.getByRole('listitem', { name: /^Save world, position 1 of 3/ }), { key: 'ArrowDown', altKey: true });
+    await waitFor(() => expect(api.orderAdminButtons).toHaveBeenCalledWith([2, 1, 3]));
+
+    await waitFor(() => expect(screen.getByRole('listitem', { name: /^Save world, position 2 of 3/ })).toBe(document.activeElement));
+    fireEvent.keyDown(screen.getByRole('listitem', { name: /^Night, position 3 of 3/ }), { key: 'ArrowDown', altKey: true });
+    expect(api.orderAdminButtons).toHaveBeenCalledTimes(1);
 });

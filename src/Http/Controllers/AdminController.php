@@ -26,7 +26,7 @@ final class AdminController
     {
         abort_if(Button::query()->whereNull('server_id')->count() >= 100, 422, 'There can be up to 100 buttons.');
 
-        Button::query()->create(ButtonInput::validate($request, true));
+        Button::query()->create(ButtonInput::validate($request, true) + ['sort' => Button::nextSort(Button::query()->whereNull('server_id'))]);
 
         return $this->index();
     }
@@ -34,6 +34,13 @@ final class AdminController
     public function update(Request $request, int $id): JsonResponse
     {
         Button::query()->whereNull('server_id')->findOrFail($id)->update(ButtonInput::validate($request, true));
+
+        return $this->index();
+    }
+
+    public function order(Request $request): JsonResponse
+    {
+        Button::reorder(Button::query()->whereNull('server_id'), $request->validate(['ids' => ['required', 'array', 'max:100']])['ids']);
 
         return $this->index();
     }

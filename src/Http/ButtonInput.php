@@ -16,18 +16,18 @@ final class ButtonInput
         $data = $request->validate([
             'label' => ['required', 'string', 'max:48'],
             'color' => ['required', Rule::in(Button::COLORS)],
+            'icon' => ['nullable', 'string', 'max:64', 'regex:/^[a-z0-9]+(-[a-z0-9]+)*$/'],
             'commands' => ['required', 'array', 'min:1', 'max:10'],
             'commands.*' => ['required', 'string', 'max:500', 'not_regex:/[\r\n]/'],
             'confirm' => ['boolean'],
-            'sort' => ['integer', 'min:-1000', 'max:1000'],
         ] + ($admin ? ['eggs' => ['nullable', 'array', 'max:100'], 'eggs.*' => ['integer', 'exists:eggs,id']] : []));
 
         return [
             'label' => $data['label'],
             'color' => $data['color'],
+            'icon' => $data['icon'] ?? null,
             'commands' => array_values(array_map(mb_trim(...), $data['commands'])),
             'confirm' => (bool) ($data['confirm'] ?? false),
-            'sort' => (int) ($data['sort'] ?? 0),
         ] + ($admin ? ['eggs' => empty($data['eggs']) ? null : array_values(array_unique(array_map(intval(...), $data['eggs'])))] : []);
     }
 }

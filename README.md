@@ -21,6 +21,9 @@ One-click buttons right below the console input for the commands you send every 
 - **Buttons per server**: owners and subusers with the **Quick Commands** permission add their own.
 - **Several commands**: up to 10 per button, sent in order.
 - **Ask first**: `{player}` or any `{name}` asks for a value before sending, with an optional confirmation.
+- **Colours and icons**: 8 theme colours and any Lucide icon per button.
+- **Your order**: drag buttons, or press Alt+Up/Down, to reorder them.
+- **Search**: from 9 buttons a search box appears; Enter runs the first match.
 - **Safe**: needs the console permission to use, and values cannot add commands of their own.
 
 ![Placeholder prompt](docs/screenshots/prompt.png)

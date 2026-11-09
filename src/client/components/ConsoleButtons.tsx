@@ -1,10 +1,15 @@
-import { useState } from 'react';
+import { useState, type ReactElement } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Dialog, Input, Label, httpErrorToHuman, toast, type SdkServer } from '@pterodactyl/sdk';
-import { deleteButton, getButtons, keys, runButton, saveButton, type ButtonInput, type QuickButton, type ServerButtons } from '../api';
+import { Button, Dialog, Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle, Input, Label, NamedIcon, httpErrorToHuman, toast, useServerResources, useServerWebsocketEvent, type SdkServer } from '@pterodactyl/sdk';
+import { deleteButton, getButtons, keys, orderButtons, runButton, saveButton, type ButtonInput, type QuickButton, type ServerButtons } from '../api';
 import ButtonDialog from './ButtonDialog';
+import QuickChip from './QuickChip';
+import SortableList from './SortableList';
 import { useSpotBelowConsoleInput } from '../lib/consoleInput';
+
+// More buttons than this get a search box.
+const SEARCH_FROM = 9;
 
 /** The button row below the console input, or above the console when there is no input. */
 export default function ConsoleButtons({ data: server }: { data: SdkServer }) {
@@ -15,7 +20,13 @@ export default function ConsoleButtons({ data: server }: { data: SdkServer }) {
     const [values, setValues] = useState<Record<string, string>>({});
     const [managing, setManaging] = useState(false);
     const [editing, setEditing] = useState<QuickButton | 'new' | null>(null);
+    const [removing, setRemoving] = useState<QuickButton | null>(null);
+    const [search, setSearch] = useState('');
     const spot = useSpotBelowConsoleInput();
+    const polled = useServerResources(server.attributes.uuid, (resources) => resources.attributes.current_state).data;
+    const [live, setLive] = useState<string | null>(null);
+    useServerWebsocketEvent('status', setLive);
+    const offline = (live ?? polled) === 'offline';
     const onError = (error: unknown) => toast.error(httpErrorToHuman(error));
     const update = (result: ServerButtons) => queryClient.setQueryData(keys.server(id), result);
 
@@ -25,13 +36,35 @@ export default function ConsoleButtons({ data: server }: { data: SdkServer }) {
         onError,
     });
     const saving = useMutation({ mutationFn: ({ input, buttonId }: { input: ButtonInput; buttonId?: number }) => saveButton(id, input, buttonId), onSuccess: (result) => (update(result), setEditing(null)), onError });
-    const removal = useMutation({ mutationFn: (buttonId: number) => deleteButton(id, buttonId), onSuccess: update, onError });
+    const removal = useMutation({ mutationFn: (buttonId: number) => deleteButton(id, buttonId), onSuccess: (result) => (update(result), setRemoving(null)), onError });
+    const ordering = useMutation({ mutationFn: (ids: number[]) => orderButtons(id, ids), onSuccess: update, onError });
+    const place = (row: ReactElement) => (spot ? createPortal(row, spot) : row);
+
+    if (buttons.isError) {
+        // Users without the console permission get a 403 and simply see no buttons.
+        const { error } = buttons;
+        if (typeof error === 'object' && 'response' in error && typeof error.response === 'object' && error.response !== null && 'status' in error.response && error.response.status === 403) {
+            return null;
+        }
+
+        return place(
+            <div className={`${spot ? 'qcmd:mt-2' : 'qcmd:mb-3'} qcmd:flex qcmd:flex-wrap qcmd:items-center qcmd:gap-2 qcmd:text-xs qcmd:text-destructive`} role='alert'>
+                <span>Quick commands could not load: {httpErrorToHuman(buttons.error)}</span>
+                <Button.Text size='xsmall' isLoading={buttons.isFetching} onClick={() => buttons.refetch()}>
+                    Retry
+                </Button.Text>
+            </div>,
+        );
+    }
 
     if (!buttons.data || (buttons.data.buttons.length === 0 && !buttons.data.can_manage)) {
         return null;
     }
 
     const click = (button: QuickButton) => {
+        if (offline || running.isPending) {
+            return;
+        }
         if (button.placeholders.length > 0 || button.confirm) {
             setValues(Object.fromEntries(button.placeholders.map((name) => [name, ''])));
             setAsking(button);
@@ -40,14 +73,34 @@ export default function ConsoleButtons({ data: server }: { data: SdkServer }) {
         }
     };
     const own = buttons.data.buttons.filter((button) => !button.global);
+    const searchable = buttons.data.buttons.length >= SEARCH_FROM;
+    const query = searchable ? search.trim().toLowerCase() : '';
+    const shown = query ? buttons.data.buttons.filter((button) => button.label.toLowerCase().includes(query) || button.commands.some((command) => command.toLowerCase().includes(query))) : buttons.data.buttons;
 
     const row = (
         <div className={`${spot ? 'qcmd:mt-2' : 'qcmd:mb-3'} qcmd:flex qcmd:flex-wrap qcmd:items-center qcmd:gap-1.5`}>
-            {buttons.data.buttons.map((button) => (
-                <Button key={button.id} size='xsmall' color={button.color} isSecondary={button.color === 'grey'} disabled={running.isPending} onClick={() => click(button)} title={button.commands.join('\n')}>
-                    {button.label}
-                </Button>
+            {searchable && (
+                <Input
+                    aria-label='Search quick commands'
+                    placeholder='Search, Enter runs the first'
+                    className='qcmd:h-7 qcmd:w-48 qcmd:text-xs'
+                    value={search}
+                    onChange={(event) => setSearch(event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                        if (event.key === 'Enter' && query && shown[0]) {
+                            event.preventDefault();
+                            click(shown[0]);
+                        } else if (event.key === 'Escape') {
+                            setSearch('');
+                        }
+                    }}
+                />
+            )}
+            {shown.map((button) => (
+                <QuickChip key={button.id} button={button} disabled={running.isPending || offline} onClick={() => click(button)} title={offline ? 'Start the server to send commands.' : button.commands.join('\n')} />
             ))}
+            {query && shown.length === 0 && <span className='qcmd:text-xs qcmd:text-muted-foreground'>No match.</span>}
+            {offline && buttons.data.buttons.length > 0 && <span className='qcmd:text-xs qcmd:text-muted-foreground'>Server offline</span>}
             {buttons.data.can_manage && (
                 <Button.Text size='xsmall' onClick={() => setManaging(true)}>
                     {buttons.data.buttons.length === 0 ? 'Add quick command' : 'Edit'}
@@ -88,15 +141,26 @@ export default function ConsoleButtons({ data: server }: { data: SdkServer }) {
                 </Dialog>
             )}
 
-            {managing && !editing && (
+            {managing && !editing && !removing && (
                 <Dialog open onClose={() => setManaging(false)} title='Quick commands'>
-                    <p className='qcmd:mb-4 qcmd:text-sm qcmd:text-muted-foreground'>Buttons for this server. Buttons from the administrator cannot be changed here.</p>
+                    <p className='qcmd:mb-4 qcmd:text-sm qcmd:text-muted-foreground'>Buttons for this server. Drag to reorder, or focus one and press Alt+Up/Down. Buttons from the administrator cannot be changed here.</p>
                     {own.length === 0 ? (
-                        <p className='qcmd:text-sm qcmd:text-muted-foreground'>No buttons of your own yet.</p>
+                        <Empty size='compact'>
+                            <EmptyHeader>
+                                <EmptyMedia variant='icon'>
+                                    <NamedIcon name='square-terminal' />
+                                </EmptyMedia>
+                                <EmptyTitle>No buttons of your own</EmptyTitle>
+                                <EmptyDescription>Add one for a command you send often, like saving the world.</EmptyDescription>
+                            </EmptyHeader>
+                            <EmptyContent>
+                                <Button onClick={() => setEditing('new')}>New button</Button>
+                            </EmptyContent>
+                        </Empty>
                     ) : (
-                        <ul className='qcmd:grid qcmd:gap-2'>
-                            {own.map((button) => (
-                                <li key={button.id} className='qcmd:flex qcmd:items-center qcmd:justify-between qcmd:gap-3 qcmd:rounded-sm qcmd:bg-sunken qcmd:px-3 qcmd:py-2'>
+                        <SortableList items={own} label={(button) => button.label} disabled={ordering.isPending} onMove={(ids) => ordering.mutateAsync(ids)}>
+                            {(button) => (
+                                <div className='qcmd:flex qcmd:min-w-0 qcmd:flex-1 qcmd:items-center qcmd:justify-between qcmd:gap-3'>
                                     <div className='qcmd:min-w-0'>
                                         <p className='qcmd:truncate qcmd:text-sm qcmd:text-foreground'>{button.label}</p>
                                         <p className='qcmd:truncate qcmd:font-mono qcmd:text-xs qcmd:text-muted-foreground'>{button.commands.join(' · ')}</p>
@@ -105,21 +169,23 @@ export default function ConsoleButtons({ data: server }: { data: SdkServer }) {
                                         <Button.Text size='xsmall' onClick={() => setEditing(button)}>
                                             Edit
                                         </Button.Text>
-                                        <Button.Danger size='xsmall' disabled={removal.isPending} onClick={() => removal.mutate(button.id)}>
+                                        <Button.Danger size='xsmall' onClick={() => setRemoving(button)}>
                                             Delete
                                         </Button.Danger>
                                     </div>
-                                </li>
-                            ))}
-                        </ul>
+                                </div>
+                            )}
+                        </SortableList>
                     )}
                     <Dialog.Footer>
                         <Button.Text className='qcmd:w-full qcmd:sm:w-auto' onClick={() => setManaging(false)}>
                             Done
                         </Button.Text>
-                        <Button className='qcmd:w-full qcmd:sm:w-auto' onClick={() => setEditing('new')}>
-                            New button
-                        </Button>
+                        {own.length > 0 && (
+                            <Button className='qcmd:w-full qcmd:sm:w-auto' onClick={() => setEditing('new')}>
+                                New button
+                            </Button>
+                        )}
                     </Dialog.Footer>
                 </Dialog>
             )}
@@ -131,8 +197,11 @@ export default function ConsoleButtons({ data: server }: { data: SdkServer }) {
                     onSave={(input) => saving.mutate({ input, buttonId: editing === 'new' ? undefined : editing.id })}
                 />
             )}
+            <Dialog.Confirm open={removing !== null} onClose={() => setRemoving(null)} title={`Delete ${removing?.label}?`} confirm='Delete' pending={removal.isPending} onConfirmed={() => removing && removal.mutate(removing.id)}>
+                The button disappears from this server for everyone.
+            </Dialog.Confirm>
         </div>
     );
 
-    return spot ? createPortal(row, spot) : row;
+    return place(row);
 }

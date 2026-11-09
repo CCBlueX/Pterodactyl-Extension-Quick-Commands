@@ -33,7 +33,7 @@ final class ServerController
         $this->authorize($request, $server, 'ext.quick-commands.manage');
         abort_if(Button::query()->where('server_id', $server->id)->count() >= 20, 422, 'A server can have up to 20 buttons.');
 
-        Button::query()->create(ButtonInput::validate($request, false) + ['server_id' => $server->id]);
+        Button::query()->create(ButtonInput::validate($request, false) + ['server_id' => $server->id, 'sort' => Button::nextSort(Button::query()->where('server_id', $server->id))]);
 
         return $this->index($request, $server);
     }
@@ -43,6 +43,15 @@ final class ServerController
         $this->authorize($request, $server, 'ext.quick-commands.manage');
 
         Button::query()->where('server_id', $server->id)->findOrFail($id)->update(ButtonInput::validate($request, false));
+
+        return $this->index($request, $server);
+    }
+
+    public function order(Request $request, Server $server): JsonResponse
+    {
+        $this->authorize($request, $server, 'ext.quick-commands.manage');
+
+        Button::reorder(Button::query()->where('server_id', $server->id), $request->validate(['ids' => ['required', 'array', 'max:20']])['ids']);
 
         return $this->index($request, $server);
     }

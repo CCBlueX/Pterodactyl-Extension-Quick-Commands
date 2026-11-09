@@ -1,8 +1,10 @@
 import { useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Dialog, PageContentBlock, Spinner, Table, httpErrorToHuman, toast } from '@pterodactyl/sdk';
-import { deleteAdminButton, getAdminButtons, keys, saveAdminButton, type AdminButtons, type ButtonInput, type QuickButton } from '../api';
+import { Button, Dialog, Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle, NamedIcon, PageContentBlock, ServerError, Spinner, Table, httpErrorToHuman, toast } from '@pterodactyl/sdk';
+import { deleteAdminButton, getAdminButtons, keys, orderAdminButtons, saveAdminButton, type AdminButtons, type ButtonInput, type QuickButton } from '../api';
 import ButtonDialog from '../components/ButtonDialog';
+import QuickChip from '../components/QuickChip';
+import SortableList from '../components/SortableList';
 import { useWide } from '../lib/useWide';
 
 const Detail = ({ label, children }: { label: string; children: ReactNode }) => (
@@ -18,19 +20,17 @@ export default function AdminScreen() {
     const data = useQuery({ queryKey: keys.admin, queryFn: getAdminButtons });
     const [editing, setEditing] = useState<QuickButton | 'new' | null>(null);
     const [removing, setRemoving] = useState<QuickButton | null>(null);
+    const [reordering, setReordering] = useState(false);
     const update = (result: AdminButtons) => queryClient.setQueryData(keys.admin, result);
     const onError = (error: unknown) => toast.error(httpErrorToHuman(error));
 
     const saving = useMutation({ mutationFn: (input: ButtonInput) => saveAdminButton(input, editing && editing !== 'new' ? editing.id : undefined), onSuccess: (result) => (update(result), setEditing(null)), onError });
     const removal = useMutation({ mutationFn: (id: number) => deleteAdminButton(id), onSuccess: (result) => (update(result), setRemoving(null)), onError });
+    const ordering = useMutation({ mutationFn: (ids: number[]) => orderAdminButtons(ids), onSuccess: update, onError });
     const eggName = (id: number) => data.data?.eggs.find((egg) => egg.id === id)?.name ?? `#${id}`;
     const shownOn = (button: QuickButton) => (button.eggs ? button.eggs.map(eggName).join(', ') : 'Every server');
     const asksFirst = (button: QuickButton) => (button.confirm || button.placeholders.length ? 'Yes' : 'No');
-    const preview = (button: QuickButton) => (
-        <Button size='xsmall' color={button.color} isSecondary={button.color === 'grey'} tabIndex={-1}>
-            {button.label}
-        </Button>
-    );
+    const preview = (button: QuickButton) => <QuickChip button={button} tabIndex={-1} />;
     const actions = (button: QuickButton, className = '') => (
         <div className={`qcmd:flex qcmd:gap-2 ${className}`}>
             <Button.Text size='xsmall' onClick={() => setEditing(button)}>
@@ -49,17 +49,37 @@ export default function AdminScreen() {
                     <h1 className='qcmd:font-header qcmd:text-2xl qcmd:font-semibold qcmd:text-foreground'>Quick Commands</h1>
                     <p className='qcmd:mt-1 qcmd:text-sm qcmd:leading-relaxed qcmd:text-foreground/70'>Buttons below the console input of every server, or only of the eggs you pick. Users with the console permission can use them.</p>
                 </div>
-                <Button className='qcmd:shrink-0' onClick={() => setEditing('new')}>
-                    New button
-                </Button>
+                <div className='qcmd:flex qcmd:shrink-0 qcmd:gap-2'>
+                    {(data.data?.buttons.length ?? 0) > 1 && (
+                        <Button.Text onClick={() => setReordering(true)}>
+                            Reorder
+                        </Button.Text>
+                    )}
+                    <Button onClick={() => setEditing('new')}>
+                        New button
+                    </Button>
+                </div>
             </header>
             {!data.data ? (
-                data.isError ? <p className='qcmd:text-sm qcmd:text-destructive'>{httpErrorToHuman(data.error)}</p> : <Spinner centered size={Spinner.Size.LARGE} />
+                data.isError ? <ServerError title='Could not load the buttons' message={httpErrorToHuman(data.error)} onRetry={() => data.refetch()} /> : <Spinner centered size={Spinner.Size.LARGE} />
+            ) : data.data.buttons.length === 0 ? (
+                <Empty>
+                    <EmptyHeader>
+                        <EmptyMedia variant='icon'>
+                            <NamedIcon name='square-terminal' />
+                        </EmptyMedia>
+                        <EmptyTitle>No buttons yet</EmptyTitle>
+                        <EmptyDescription>Add a button for a command every server sends often, like saving the world.</EmptyDescription>
+                    </EmptyHeader>
+                    <EmptyContent>
+                        <Button onClick={() => setEditing('new')}>New button</Button>
+                    </EmptyContent>
+                </Empty>
             ) : wide ? (
                 <Table
                     rows={data.data.buttons}
                     keyOf={(button) => String(button.id)}
-                    emptyState='No buttons yet.'
+                    emptyState={null}
                     columns={[
                         { id: 'label', label: 'Button', cell: preview },
                         { id: 'commands', label: 'Commands', cell: (button) => <span className='qcmd:font-mono qcmd:text-xs'>{button.commands.join(' · ')}</span> },
@@ -68,8 +88,6 @@ export default function AdminScreen() {
                         { id: 'actions', label: '', cell: (button) => actions(button, 'qcmd:justify-end') },
                     ]}
                 />
-            ) : data.data.buttons.length === 0 ? (
-                <p className='qcmd:rounded-sm qcmd:border qcmd:border-border qcmd:bg-card qcmd:p-6 qcmd:text-center qcmd:text-sm qcmd:text-muted-foreground'>No buttons yet.</p>
             ) : (
                 <ul className='qcmd:divide-y qcmd:divide-border qcmd:rounded-sm qcmd:border qcmd:border-border qcmd:bg-card'>
                     {data.data.buttons.map((button) => (
@@ -94,6 +112,24 @@ export default function AdminScreen() {
                 </ul>
             )}
             {editing && data.data && <ButtonDialog button={editing === 'new' ? null : editing} eggs={data.data.eggs} pending={saving.isPending} onClose={() => setEditing(null)} onSave={(input) => saving.mutate(input)} />}
+            {reordering && data.data && (
+                <Dialog open onClose={() => setReordering(false)} title='Reorder buttons'>
+                    <p className='qcmd:mb-4 qcmd:text-sm qcmd:text-muted-foreground'>Drag a button, or focus it and press Alt+Up/Down. Servers show them in this order, before their own.</p>
+                    <SortableList items={data.data.buttons} label={(button) => button.label} disabled={ordering.isPending} onMove={(ids) => ordering.mutateAsync(ids)}>
+                        {(button) => (
+                            <div className='qcmd:flex qcmd:min-w-0 qcmd:flex-1 qcmd:items-center qcmd:justify-between qcmd:gap-3'>
+                                {preview(button)}
+                                <span className='qcmd:truncate qcmd:text-xs qcmd:text-muted-foreground'>{shownOn(button)}</span>
+                            </div>
+                        )}
+                    </SortableList>
+                    <Dialog.Footer>
+                        <Button className='qcmd:w-full qcmd:sm:w-auto' onClick={() => setReordering(false)}>
+                            Done
+                        </Button>
+                    </Dialog.Footer>
+                </Dialog>
+            )}
             <Dialog.Confirm open={removing !== null} onClose={() => setRemoving(null)} title={`Delete ${removing?.label}?`} confirm='Delete' pending={removal.isPending} onConfirmed={() => removing && removal.mutate(removing.id)}>
                 It disappears from every server it was shown on.
             </Dialog.Confirm>

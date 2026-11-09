@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Button, Dialog, Input, Label, Select, Switch } from '@pterodactyl/sdk';
 import type { ButtonInput, Color, QuickButton } from '../api';
+import IconPicker from './IconPicker';
+import QuickChip from './QuickChip';
 
 export const COLORS: { value: Color; label: string }[] = [
     { value: 'grey', label: 'Grey' },
@@ -8,6 +10,9 @@ export const COLORS: { value: Color; label: string }[] = [
     { value: 'green', label: 'Green' },
     { value: 'orange', label: 'Orange' },
     { value: 'red', label: 'Red' },
+    { value: 'cyan', label: 'Cyan' },
+    { value: 'yellow', label: 'Yellow' },
+    { value: 'contrast', label: 'Contrast' },
 ];
 
 interface Props {
@@ -21,8 +26,8 @@ interface Props {
 export default function ButtonDialog({ button, eggs, pending, onClose, onSave }: Props) {
     const [input, setInput] = useState<ButtonInput>(
         button
-            ? { label: button.label, color: button.color, commands: button.commands, confirm: button.confirm, sort: button.sort, eggs: button.eggs }
-            : { label: '', color: 'grey', commands: [''], confirm: false, sort: 0, eggs: null }
+            ? { label: button.label, color: button.color, icon: button.icon, commands: button.commands, confirm: button.confirm, eggs: button.eggs }
+            : { label: '', color: 'grey', icon: null, commands: [''], confirm: false, eggs: null }
     );
     const set = (changes: Partial<ButtonInput>) => setInput((current) => ({ ...current, ...changes }));
     const setCommand = (index: number, value: string) => set({ commands: input.commands.map((command, i) => (i === index ? value : command)) });
@@ -40,6 +45,13 @@ export default function ButtonDialog({ button, eggs, pending, onClose, onSave }:
                         <Label htmlFor='qcmd-color'>Colour</Label>
                         <Select id='qcmd-color' value={input.color} onChange={(value) => set({ color: value as Color })} options={COLORS} />
                     </div>
+                </div>
+                <div>
+                    <div className='qcmd:mb-1 qcmd:flex qcmd:items-center qcmd:justify-between qcmd:gap-3'>
+                        <Label htmlFor='qcmd-icon'>Icon</Label>
+                        <QuickChip button={{ label: input.label.trim() || 'Preview', color: input.color, icon: input.icon }} tabIndex={-1} aria-hidden />
+                    </div>
+                    <IconPicker value={input.icon} onChange={(icon) => set({ icon })} />
                 </div>
                 <div>
                     <Label htmlFor='qcmd-command-0'>Commands</Label>
